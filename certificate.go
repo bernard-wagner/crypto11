@@ -58,6 +58,8 @@ func FindCertificateOnSession(session *PKCS11Session, slot uint, id []byte, labe
 	var handles []pkcs11.ObjectHandle
 	var template []*pkcs11.Attribute
 
+	template = append(template, pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE))
+	template = append(template, pkcs11.NewAttribute(pkcs11.CKA_CERTIFICATE_TYPE, pkcs11.CKC_X_509))
 	if id != nil {
 		template = append(template, pkcs11.NewAttribute(pkcs11.CKA_ID, id))
 	}
@@ -114,20 +116,32 @@ func ImportCertificateOnSlot(slot uint, id []byte, label []byte, certificate *x5
 //
 // Either or both label and/or id can be nil, in which case random values will be generated.
 func ImportCertificateOnSession(session *PKCS11Session, slot uint, id []byte, label []byte, certificate *x509.Certificate) error {
+	var err error
+	if label == nil {
+		if label, err = generateKeyLabel(); err != nil {
+			return err
+		}
+	}
+	if id == nil {
+		if id, err = generateKeyLabel(); err != nil {
+			return err
+		}
+	}
+
 	attributes := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_CERTIFICATE),
 		pkcs11.NewAttribute(pkcs11.CKA_CERTIFICATE_TYPE, pkcs11.CKC_X_509),
 		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
 		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, false),
 		pkcs11.NewAttribute(pkcs11.CKA_SUBJECT, certificate.RawSubject),
-		pkcs11.NewAttribute(pkcs11.CKA_ISSUER, []byte(certificate.RawIssuer)),
+		pkcs11.NewAttribute(pkcs11.CKA_ISSUER, certificate.RawIssuer),
 		pkcs11.NewAttribute(pkcs11.CKA_LABEL, label),
 		pkcs11.NewAttribute(pkcs11.CKA_ID, id),
 		pkcs11.NewAttribute(pkcs11.CKA_SERIAL_NUMBER, certificate.SerialNumber.Bytes()),
 		pkcs11.NewAttribute(pkcs11.CKA_VALUE, certificate.Raw),
 	}
 
-	_, err := session.Ctx.CreateObject(session.Handle, attributes)
+	_, err = session.Ctx.CreateObject(session.Handle, attributes)
 
 	return err
 }
