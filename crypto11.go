@@ -113,6 +113,9 @@ var ErrCannotGetRandomData = errors.New("crypto11: cannot get random data from P
 // ErrUnsupportedKeyType is returned when the PKCS#11 library returns a key type that isn't supported
 var ErrUnsupportedKeyType = errors.New("crypto11: unrecognized key type")
 
+// ErrCertificateNotFound represents the failure to find the requested PKCS#11 certificate
+var ErrCertificateNotFound = errors.New("crypto11: could not find PKCS#11 certificate")
+
 // PKCS11Object contains a reference to a loaded PKCS#11 object.
 type PKCS11Object struct {
 	// The PKCS#11 object handle.
