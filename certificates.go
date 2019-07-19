@@ -22,6 +22,7 @@
 package crypto11
 
 import (
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/asn1"
 
@@ -29,20 +30,14 @@ import (
 	"github.com/pkg/errors"
 )
 
-// FindCertificate retrieves a previously imported certificate
-//
-// Either (but not all three) of id, label and serial may be nil, in which case they are ignored.
-// If specified, serial should be the ASN.1 DER-encoding of the certificate serial number.
-func (c *Context) FindCertificate(id []byte, label []byte, serial []byte) (*x509.Certificate, error) {
+func (c *Context) findCertificate(id []byte, label []byte, serial []byte) (obj *pkcs11.ObjectHandle, err error) {
 	var handles []pkcs11.ObjectHandle
 	var template []*pkcs11.Attribute
-
 	if c.closed.Get() {
 		return nil, errClosed
 	}
 
-	var cert *x509.Certificate
-	err := c.withSession(func(session *pkcs11Session) (err error) {
+	err = c.withSession(func(session *pkcs11Session) (err error) {
 		if id == nil && label == nil && serial == nil {
 			return errors.New("id, label and serial cannot both be nil")
 		}
@@ -73,12 +68,33 @@ func (c *Context) FindCertificate(id []byte, label []byte, serial []byte) (*x509
 		if len(handles) == 0 {
 			return nil
 		}
+		return nil
+	})
+
+	return &handles[0], nil
+}
+
+// FindCertificate retrieves a previously imported certificate
+//
+// Either (but not all three) of id, label and serial may be nil, in which case they are ignored.
+// If specified, serial should be the ASN.1 DER-encoding of the certificate serial number.
+func (c *Context) FindCertificate(id []byte, label []byte, serial []byte) (*x509.Certificate, error) {
+	if c.closed.Get() {
+		return nil, errClosed
+	}
+
+	var cert *x509.Certificate
+	err := c.withSession(func(session *pkcs11Session) (err error) {
+		handle, err := c.findCertificate(id, label, serial)
+		if err != nil {
+			return err
+		}
 
 		attributes := []*pkcs11.Attribute{
 			pkcs11.NewAttribute(pkcs11.CKA_VALUE, 0),
 		}
 
-		if attributes, err = session.ctx.GetAttributeValue(session.handle, handles[0], attributes); err != nil {
+		if attributes, err = session.ctx.GetAttributeValue(session.handle, *handle, attributes); err != nil {
 			return err
 		}
 
@@ -86,8 +102,60 @@ func (c *Context) FindCertificate(id []byte, label []byte, serial []byte) (*x509
 
 		return err
 	})
-
 	return cert, err
+}
+
+// FindX509KeyPair retrieves a previously imported certificate and it's corresponding private key
+//
+// Either (but not all three) of id, label and serial may be nil, in which case they are ignored.
+// If specified, serial should be the ASN.1 DER-encoding of the certificate serial number. If the private key
+// does not have a label and no id is specified, the certificate's id will be used. This is to allow
+// compatibility with SUNPKCS11 X509 KeyPairs
+func (c *Context) FindX509KeyPair(id []byte, label []byte, serial []byte) (*tls.Certificate, error) {
+	if c.closed.Get() {
+		return nil, errClosed
+	}
+
+	attributes := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, 0),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, 0),
+	}
+
+	var cert *x509.Certificate
+	var k Signer
+	err := c.withSession(func(session *pkcs11Session) (err error) {
+		handle, err := c.findCertificate(id, label, serial)
+		if err != nil {
+			return err
+		}
+
+		if attributes, err = session.ctx.GetAttributeValue(session.handle, *handle, attributes); err != nil {
+			return err
+		}
+
+		cert, err = x509.ParseCertificate(attributes[0].Value)
+		return err
+	})
+
+	if id != nil || label != nil {
+		k, err = c.FindKeyPair(id, label)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if id == nil && k == nil {
+		id = attributes[1].Value
+		k, err = c.FindKeyPair(id, label)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &tls.Certificate{
+		PrivateKey:  k,
+		Certificate: [][]byte{cert.Raw},
+	}, err
 }
 
 // ImportCertificate imports a certificate onto the token.  he id parameter is used to
